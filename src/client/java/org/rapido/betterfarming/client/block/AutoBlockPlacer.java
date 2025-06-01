@@ -36,7 +36,7 @@ public class AutoBlockPlacer {
         isPlacing = false;
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null) {
-            client.player.sendMessage(Text.literal("Premier point sélectionné à : " + pos.toShortString()), true);
+            client.player.sendMessage(Text.literal("§aPremier point sélectionné à : " + pos.toShortString()), true);
         }
     }
 
@@ -45,12 +45,12 @@ public class AutoBlockPlacer {
             secondPoint = pos;
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player != null) {
-                client.player.sendMessage(Text.literal("Deuxième point sélectionné à : " + pos.toShortString()), true);
+                client.player.sendMessage(Text.literal("§3Deuxième point sélectionné à : " + pos.toShortString()), true);
             }
         } else {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player != null) {
-                client.player.sendMessage(Text.literal("Veuillez d'abord sélectionner le premier point (touche V)."), true);
+                client.player.sendMessage(Text.literal("§cVeuillez d'abord sélectionner le premier point (touche V)."), true);
             }
         }
     }
@@ -67,16 +67,16 @@ public class AutoBlockPlacer {
             if (client.player != null) {
                 ItemStack mainHandStack = client.player.getMainHandStack();
                 if (mainHandStack.isEmpty() || !(mainHandStack.getItem() instanceof BlockItem)) {
-                    client.player.sendMessage(Text.literal("Vous devez tenir un bloc en main pour construire!"), true);
+                    client.player.sendMessage(Text.literal("§cVous devez tenir un bloc en main pour construire!"), true);
                     isPlacing = false;
                     return;
                 }
-                client.player.sendMessage(Text.literal("Début de la construction automatique de " + blocksToPlace.size() + " blocs."), true);
+                client.player.sendMessage(Text.literal("§eDébut de la construction automatique de " + blocksToPlace.size() + " blocs."), true);
             }
         } else {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player != null) {
-                client.player.sendMessage(Text.literal("Veuillez sélectionner deux points avant de commencer la construction."), true);
+                client.player.sendMessage(Text.literal("§cVeuillez sélectionner deux points avant de commencer la construction."), true);
             }
         }
     }
@@ -96,7 +96,7 @@ public class AutoBlockPlacer {
         
         ItemStack mainHandStack = player.getMainHandStack();
         if (mainHandStack.isEmpty() || !(mainHandStack.getItem() instanceof BlockItem)) {
-            player.sendMessage(Text.literal("Construction interrompue: vous devez avoir un bloc en main!"), true);
+            player.sendMessage(Text.literal("§cConstruction interrompue: vous devez avoir un bloc en main!"), true);
             isPlacing = false;
             return;
         }
@@ -109,7 +109,7 @@ public class AutoBlockPlacer {
         
         if (currentBlockIndex >= blocksToPlace.size()) {
             isPlacing = false;
-            player.sendMessage(Text.literal("Construction automatique terminée."), true);
+            player.sendMessage(Text.literal("§eConstruction automatique terminée."), true);
             return;
         }
 
@@ -138,7 +138,7 @@ public class AutoBlockPlacer {
             if (failureCounter > MAX_FAILURES) {
                 failureCounter = 0;
                 currentBlockIndex++;
-                player.sendMessage(Text.literal("Bloc ignoré à " + pos.toShortString() + " (trop loin)"), true);
+                player.sendMessage(Text.literal("§cBloc ignoré à " + pos.toShortString() + " (trop loin)"), true);
             }
             return;
         }
@@ -251,3 +251,4 @@ public class AutoBlockPlacer {
     }
 }
 
+// Debug le systeme de pose de block
