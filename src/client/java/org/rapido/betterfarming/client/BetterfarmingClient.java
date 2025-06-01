@@ -76,7 +76,7 @@ public class BetterfarmingClient implements ClientModInitializer {
 
             AutoBlockPlacer.tick();
 
-            AutoTreeCutter.tick();
+            // AutoTreeCutter.tick();
         });
     }
 
