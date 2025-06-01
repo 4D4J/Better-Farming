@@ -1,0 +1,46 @@
+# Gradle
+.gradle/
+build/
+out/
+classes/
+
+# Eclipse
+*.launch
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+*.iws
+.idea_modules/
+
+# Visual Studio Code
+.settings/
+.vscode/
+bin/
+.classpath
+.project
+
+# macOS
+*.DS_Store
+
+# Minecraft
+run/
+*.log
+logs/
+crash-reports/
+.fabric/
+
+# Java
+hs_err_*.log
+replay_*.log
+*.hprof
+*.jfr
+
+# Mod specific
+remappedSrc/
+*.launch.xml
+
+# Fabric
+.fabric-loom
