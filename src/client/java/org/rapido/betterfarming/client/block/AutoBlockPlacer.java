@@ -278,7 +278,7 @@ public class AutoBlockPlacer {
                     // Le placement a échoué
                     handlePlacementFailure(player, targetPos);
                 }
-                return; // Important : ne pas continuer avec le code normal pour les blocs
+                return;
             } else {
                 // Pas de terre labourée sous la position cible, passer à la position suivante
                 currentBlockIndex++;
