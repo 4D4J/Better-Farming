@@ -1,7 +1,7 @@
 # Better Farming
 
 ## Description
-Better Farming est un mod Minecraft utilisant Fabric qui améliore l'expérience agricole et de construction dans Minecraft. 
+Better Farming est un mod Minecraft utilisant Fabric qui améliore l'expérience de farming et de construction dans Minecraft. 
 
 ## Fonctionnalités
 

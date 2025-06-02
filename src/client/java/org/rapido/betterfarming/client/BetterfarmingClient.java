@@ -15,6 +15,9 @@ import org.rapido.betterfarming.client.TreeCutter.AutoTreeCutter;
 
 public class BetterfarmingClient implements ClientModInitializer {
 
+    // Declaration des KeyBinds pour le GUI
+    private static KeyBinding keyBindOpenGui;
+
     // Declaration des KeyBinds pour le AutoBlockPlacer
     private static KeyBinding keyBindFirstPoint;
     private static KeyBinding keyBindSecondPoint;
@@ -25,6 +28,15 @@ public class BetterfarmingClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+
+
+        // KeyBinds pour le GUI
+        keyBindOpenGui = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "betterfarming.open_gui",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_B,
+                "category.betterfarming.gui"
+        ));
 
         // KeyBinds pour le AutoBlockPlacer
         keyBindFirstPoint = KeyBindingHelper.registerKeyBinding(new KeyBinding(
@@ -68,16 +80,24 @@ public class BetterfarmingClient implements ClientModInitializer {
             }
 
             if (keyBindCutTree.wasPressed()) {
-                if (client.player != null) {
-                    client.player.sendMessage(Text.literal("Fonction de coupe d'arbre activée!"), true);
-                    AutoTreeCutter.cutTree();
-                }
+                handleCutTree(client);
+            }
+            if (keyBindOpenGui.wasPressed()) {
+                handleOpenGui(client);
             }
 
             AutoBlockPlacer.tick();
 
             // AutoTreeCutter.tick();
+            // OpenGui.tick();
         });
+    }
+
+    private void handleOpenGui(MinecraftClient client) {
+        if (client.player != null) {
+            // Ouvrir le GUI ici
+            client.player.sendMessage(Text.literal("§eGUI ouvert!"), true);
+        }
     }
 
     private void handleFirstPointSelection(MinecraftClient client) {
@@ -108,6 +128,13 @@ public class BetterfarmingClient implements ClientModInitializer {
             }
             AutoBlockPlacer.startPlacing();
             client.player.sendMessage(Text.literal("§eConstruction automatique démarrée!"), true);
+        }
+    }
+
+    private void handleCutTree(MinecraftClient client) {
+        if (client.player != null) {
+            client.player.sendMessage(Text.literal("§eFonction de coupe d'arbre activée!"), true);
+            AutoTreeCutter.cutTree();
         }
     }
 }
