@@ -1,7 +1,7 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "package": "org.rapido.betterfarming.mixin",
+  "package": "org.rapido.betterfarming.client.mixins",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
   ],
@@ -9,3 +9,4 @@
     "defaultRequire": 1
   }
 }
+

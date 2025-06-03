@@ -131,9 +131,15 @@ public class BetterfarmingClient implements ClientModInitializer {
     }
 
     private void handleCutTree(MinecraftClient client) {
-        if (client.player != null) {
-            client.player.sendMessage(Text.literal("§eFonction de coupe d'arbre activée!"), true);
-            AutoTreeCutter.cutTree();
+        if (client.player != null && client.world != null) {
+            // Appeler notre fonction pour couper les racines des arbres à proximité
+            int rootsCut = AutoTreeCutter.cutNearbyTreeRoots(client.world, client.player);
+
+            if (rootsCut > 0) {
+                client.player.sendMessage(Text.literal("§a" + rootsCut + " racines d'arbres coupées dans un rayon de 10 blocs!"), true);
+            } else {
+                client.player.sendMessage(Text.literal("§cAucune racine d'arbre trouvée à proximité."), true);
+            }
         }
     }
 }

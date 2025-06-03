@@ -1,8 +1,11 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "package": "org.rapido.betterfarming.mixin.client",
+  "package": "org.rapido.betterfarming.client.mixins",
   "compatibilityLevel": "JAVA_21",
+    "mixins": [
+      "BlockMixin"
+    ],
   "client": [
   ],
   "injectors": {

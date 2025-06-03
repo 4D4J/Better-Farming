@@ -1,42 +1,30 @@
 package org.rapido.betterfarming.client.TreeCutter;
 
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.Direction;
-import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
-import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.world.World;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.sound.SoundCategory;
+import net.minecraft.entity.player.PlayerEntity;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AutoTreeCutter {
 
-    // Configuration générale
-    private static final int SEARCH_RADIUS = 20;
+    // Configuration
     private static final int MAX_TREE_HEIGHT = 30;
-    private static final int MIN_TREE_HEIGHT = 3;
-    private static final int MAX_TREES_PER_RUN = 10;
+    private static final int MAX_TREE_RADIUS = 15;
+    private static final int MIN_TREE_SIZE = 3;
+    private static final int ROOT_SEARCH_RADIUS = 10;
 
-    // Délai minimal entre les actions
-    private static final int TELEPORT_DELAY = 50;
-
-    // État de fonctionnement
-    private static final AtomicBoolean isRunning = new AtomicBoolean(false);
-
-    // Types de blocs
+    // Types de blocs - Mis à jour pour 1.21.4
     private static final Set<Block> WOOD_BLOCKS = Set.of(
             Blocks.OAK_LOG, Blocks.BIRCH_LOG, Blocks.SPRUCE_LOG,
             Blocks.JUNGLE_LOG, Blocks.ACACIA_LOG, Blocks.DARK_OAK_LOG,
@@ -44,6 +32,8 @@ public class AutoTreeCutter {
             Blocks.WARPED_STEM, Blocks.STRIPPED_OAK_LOG, Blocks.STRIPPED_BIRCH_LOG,
             Blocks.STRIPPED_SPRUCE_LOG, Blocks.STRIPPED_JUNGLE_LOG,
             Blocks.STRIPPED_ACACIA_LOG, Blocks.STRIPPED_DARK_OAK_LOG,
+            Blocks.STRIPPED_MANGROVE_LOG, Blocks.STRIPPED_CHERRY_LOG,
+            Blocks.STRIPPED_CRIMSON_STEM, Blocks.STRIPPED_WARPED_STEM,
             Blocks.MANGROVE_ROOTS, Blocks.MUDDY_MANGROVE_ROOTS
     );
 
@@ -59,214 +49,170 @@ public class AutoTreeCutter {
             Blocks.COARSE_DIRT, Blocks.ROOTED_DIRT, Blocks.MYCELIUM,
             Blocks.SAND, Blocks.RED_SAND, Blocks.SOUL_SAND,
             Blocks.SOUL_SOIL, Blocks.NETHERRACK, Blocks.CRIMSON_NYLIUM,
-            Blocks.WARPED_NYLIUM, Blocks.MUD, Blocks.MUDDY_MANGROVE_ROOTS
+            Blocks.WARPED_NYLIUM, Blocks.MUD, Blocks.MUDDY_MANGROVE_ROOTS,
+            Blocks.STONE, Blocks.DEEPSLATE
     );
 
+    // Données d'un arbre
+    private static class TreeData {
+        final Set<BlockPos> woodBlocks;
+        final Set<BlockPos> leafBlocks;
+        final BlockPos root;
 
-    public static void cutTree() {
-        if (isRunning.get()) {
-            sendActionBarMessage("Coupe d'arbres déjà en cours!", Formatting.RED);
-            return;
+        TreeData(Set<BlockPos> woodBlocks, Set<BlockPos> leafBlocks, BlockPos root) {
+            this.woodBlocks = woodBlocks;
+            this.leafBlocks = leafBlocks;
+            this.root = root;
         }
-
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.player == null || client.world == null) {
-            sendActionBarMessage("Impossible de démarrer la coupe (client non initialisé)", Formatting.RED);
-            return;
-        }
-
-        CompletableFuture.runAsync(() -> {
-            if (!isRunning.compareAndSet(false, true)) {
-                return;
-            }
-
-            try {
-                processTreeCutting(client);
-            } catch (Exception e) {
-                sendActionBarMessage("Erreur: " + e.getMessage(), Formatting.RED);
-                e.printStackTrace();
-            } finally {
-                isRunning.set(false);
-            }
-        });
     }
 
 
-    private static void processTreeCutting(MinecraftClient client) {
-        PlayerEntity player = client.player;
-        World world = client.world;
-        if (player == null || world == null) return;
+    public static void onWoodBlockBroken(World world, BlockPos pos, BlockState state) {
+        if (!(world instanceof ServerWorld serverWorld)) return;
+        if (!WOOD_BLOCKS.contains(state.getBlock())) return;
 
+        // Vérifier si c'était une racine d'arbre
+        if (isTreeRoot(world, pos)) {
+            // Analyser l'arbre complet
+            TreeData tree = analyzeTreeFromRoot(world, pos);
+
+            if (tree != null && tree.woodBlocks.size() >= MIN_TREE_SIZE) {
+                // Faire s'effondrer l'arbre de manière asynchrone pour éviter les lags
+                CompletableFuture.runAsync(() -> collapseTree(serverWorld, tree));
+            }
+        } else {
+            // Si ce n'est pas une racine, vérifier si l'arbre est toujours stable
+            checkTreeStability(serverWorld, pos);
+        }
+    }
+
+    /**
+     * Recherche et coupe toutes les racines d'arbres dans un rayon autour du joueur
+     * @param world Le monde
+     * @param player Le joueur
+     * @return Nombre de racines coupées
+     */
+    public static int cutNearbyTreeRoots(World world, PlayerEntity player) {
+        // Fonctionne côté client, aucune vérification de ServerWorld
         BlockPos playerPos = player.getBlockPos();
-        Vec3d originalPos = player.getPos();
-        float originalYaw = player.getYaw();
-        float originalPitch = player.getPitch();
+        int rootsCut = 0;
+        List<BlockPos> rootPositions = new ArrayList<>();
 
-        sendActionBarMessage("Recherche des arbres...", Formatting.GREEN);
-
-        // Détection des arbres optimisée
-        List<TreeData> trees = findTrees(world, playerPos, SEARCH_RADIUS);
-
-        if (trees.isEmpty()) {
-            sendActionBarMessage("Aucun arbre trouvé dans un rayon de " + SEARCH_RADIUS + " blocs", Formatting.YELLOW);
-            return;
-        }
-
-        // Limiter le nombre d'arbres pour éviter de surcharger le client
-        int treesToProcess = Math.min(trees.size(), MAX_TREES_PER_RUN);
-        sendActionBarMessage(treesToProcess + " arbre(s) détecté(s) sur " + trees.size() + ". Début de la coupe...", Formatting.GREEN);
-
-        try {
-            // Trier les arbres par proximité
-            trees.sort(Comparator.comparingDouble(tree ->
-                    tree.root.getSquaredDistance(playerPos)));
-
-            // Couper chaque arbre
-            for (int i = 0; i < treesToProcess; i++) {
-                TreeData tree = trees.get(i);
-
-                sendActionBarMessage("Arbre " + (i+1) + "/" + treesToProcess + " (taille: " + tree.height + ")", Formatting.AQUA);
-
-                // Se positionner près de l'arbre
-                movePlayerToTree(client, tree.root);
-                sleep(TELEPORT_DELAY);
-
-                // Couper l'arbre (casser la racine et faire dropper le reste)
-                harvestTreeByRoot(client, tree);
-
-                // Attendre un peu entre chaque arbre
-                sleep(200);
-
-                // Vérifier si l'utilisateur a interrompu le processus
-                if (!isRunning.get()) {
-                    sendActionBarMessage("Coupe interrompue par l'utilisateur", Formatting.YELLOW);
-                    break;
-                }
-            }
-
-            sendActionBarMessage("✓ Coupe terminée! " + treesToProcess + " arbre(s) abattu(s)", Formatting.GREEN);
-
-        } finally {
-            // Retour à la position d'origine
-            sleep(100);
-            teleportPlayer(client, originalPos, originalYaw, originalPitch);
-            sendActionBarMessage("Retour à la position d'origine", Formatting.GRAY);
-        }
-    }
-
-
-    private static List<TreeData> findTrees(World world, BlockPos center, int radius) {
-        List<TreeData> trees = new ArrayList<>();
-        Set<BlockPos> processedRoots = new HashSet<>();
-
-        // Scan optimisé par couches
-        for (int y = -3; y <= 5; y++) { // Commencer par les hauteurs où les racines sont probables
-            for (int x = -radius; x <= radius; x++) {
-                for (int z = -radius; z <= radius; z++) {
-                    // Vérifier si on est dans le rayon (optimisation)
-                    if (x*x + z*z > radius*radius) continue;
-
-                    BlockPos pos = center.add(x, y, z);
+        // Rechercher toutes les racines d'arbres dans le rayon
+        for (int x = -ROOT_SEARCH_RADIUS; x <= ROOT_SEARCH_RADIUS; x++) {
+            for (int y = -3; y <= 3; y++) {  // Chercher légèrement au-dessus/en-dessous du joueur
+                for (int z = -ROOT_SEARCH_RADIUS; z <= ROOT_SEARCH_RADIUS; z++) {
+                    BlockPos pos = playerPos.add(x, y, z);
 
                     // Vérifier si c'est un bloc de bois
                     BlockState state = world.getBlockState(pos);
-                    if (WOOD_BLOCKS.contains(state.getBlock())) {
-                        // Trouver la racine de l'arbre
-                        BlockPos root = findTreeRoot(world, pos);
-
-                        // Si on a déjà traité cet arbre, passer au suivant
-                        if (root == null || processedRoots.contains(root)) continue;
-                        processedRoots.add(root);
-
-                        // Analyser l'arbre
-                        TreeData tree = analyzeTree(world, root);
-                        if (tree != null && tree.height >= MIN_TREE_HEIGHT) {
-                            trees.add(tree);
-                        }
+                    if (WOOD_BLOCKS.contains(state.getBlock()) && isTreeRootEnhanced(world, pos)) {
+                        rootPositions.add(pos);
                     }
                 }
             }
         }
 
-        return trees;
+        // Debug: afficher le nombre de racines trouvées
+        System.out.println("Racines trouvées: " + rootPositions.size());
+
+        // Couper chaque racine une par une
+        for (BlockPos rootPos : rootPositions) {
+            // Simuler la destruction du bloc (drop d'items et son)
+            world.breakBlock(rootPos, true, player);
+            world.playSound(null, rootPos, SoundEvents.BLOCK_WOOD_BREAK, SoundCategory.BLOCKS, 1.0f, 1.0f);
+            rootsCut++;
+        }
+
+        return rootsCut;
     }
 
+    /**
+     * Vérifie si le bloc donné est une racine d'arbre (méthode améliorée)
+     */
+    private static boolean isTreeRootEnhanced(World world, BlockPos pos) {
+        // Vérification 1: Y a-t-il du sol en dessous?
+        BlockState below = world.getBlockState(pos.down());
+        if (GROUND_BLOCKS.contains(below.getBlock())) {
+            return true;
+        }
 
-    private static BlockPos findTreeRoot(World world, BlockPos start) {
-        BlockPos current = start;
-        BlockPos lastWood = null;
+        // Vérification 2: Y a-t-il du sol sur les côtés et le bloc est-il près du sol?
+        // (pour les racines qui ne sont pas directement au-dessus du sol)
+        for (Direction dir : new Direction[]{Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST}) {
+            BlockPos adjacentPos = pos.offset(dir);
+            BlockState adjacentState = world.getBlockState(adjacentPos);
 
-        // Descendre jusqu'à trouver le sol
-        while (current.getY() > world.getBottomY()) {
-            BlockState state = world.getBlockState(current);
-            if (WOOD_BLOCKS.contains(state.getBlock())) {
-                lastWood = current;
-                current = current.down();
-            } else {
-                break;
+            // Si un bloc adjacent est du sol, c'est potentiellement une racine
+            if (GROUND_BLOCKS.contains(adjacentState.getBlock())) {
+                // Vérifier si on est proche du sol (dans les 2 blocs au-dessus)
+                BlockPos groundCheck = pos.down(2);
+                BlockState groundState = world.getBlockState(groundCheck);
+                if (GROUND_BLOCKS.contains(groundState.getBlock())) {
+                    return true;
+                }
             }
         }
 
-        // Vérifier si on a trouvé une racine valide
-        if (lastWood != null) {
-            BlockState ground = world.getBlockState(lastWood.down());
-            if (GROUND_BLOCKS.contains(ground.getBlock())) {
-                return lastWood;
+        // Vérification 3: Est-ce le bloc de bois le plus bas d'un arbre?
+        // (descendre depuis le bloc et voir si on atteint un bloc qui n'est pas du bois)
+        BlockPos checkPos = pos.down();
+        BlockState checkState = world.getBlockState(checkPos);
+
+        // Si le bloc en dessous n'est pas du bois, c'est potentiellement la racine
+        if (!WOOD_BLOCKS.contains(checkState.getBlock())) {
+            // Vérifions aussi qu'il y a d'autres blocs de bois au-dessus (c'est un arbre)
+            BlockPos above = pos.up();
+            BlockState aboveState = world.getBlockState(above);
+            if (WOOD_BLOCKS.contains(aboveState.getBlock())) {
+                return true;
             }
         }
 
-        return null;
+        return false;
     }
 
+    private static boolean isTreeRoot(World world, BlockPos pos) {
+        // Un bloc est considéré comme racine s'il y a du sol en dessous
+        BlockState below = world.getBlockState(pos.down());
+        return GROUND_BLOCKS.contains(below.getBlock());
+    }
 
-    private static TreeData analyzeTree(World world, BlockPos root) {
+    /**
+     * Analyse complètement un arbre à partir de sa racine
+     */
+    private static TreeData analyzeTreeFromRoot(World world, BlockPos root) {
         Set<BlockPos> woodBlocks = new HashSet<>();
         Set<BlockPos> leafBlocks = new HashSet<>();
-
-        Queue<BlockPos> toExplore = new LinkedList<>();
         Set<BlockPos> visited = new HashSet<>();
+        Queue<BlockPos> toExplore = new LinkedList<>();
 
         toExplore.add(root);
-        int maxHeight = 0;
 
-        // Algorithme BFS pour explorer l'arbre
         while (!toExplore.isEmpty()) {
             BlockPos pos = toExplore.poll();
 
             if (visited.contains(pos) ||
                     pos.getY() - root.getY() > MAX_TREE_HEIGHT ||
-                    pos.getSquaredDistance(root) > MAX_TREE_HEIGHT * MAX_TREE_HEIGHT) {
+                    pos.getSquaredDistance(root) > MAX_TREE_RADIUS * MAX_TREE_RADIUS) {
                 continue;
             }
 
             visited.add(pos);
-
             BlockState state = world.getBlockState(pos);
             Block block = state.getBlock();
 
             if (WOOD_BLOCKS.contains(block)) {
                 woodBlocks.add(pos);
-                maxHeight = Math.max(maxHeight, pos.getY() - root.getY());
 
-                // Explorer dans toutes les directions
-                for (Direction dir : Direction.values()) {
-                    BlockPos next = pos.offset(dir);
-                    if (!visited.contains(next)) {
-                        toExplore.add(next);
-                    }
-                }
-
-                // Vérifier les diagonales pour les arbres complexes
+                // Explorer toutes les directions + diagonales pour les blocs de bois
                 for (int dx = -1; dx <= 1; dx++) {
                     for (int dy = -1; dy <= 1; dy++) {
                         for (int dz = -1; dz <= 1; dz++) {
                             if (dx == 0 && dy == 0 && dz == 0) continue;
-                            BlockPos diagonal = pos.add(dx, dy, dz);
-                            if (!visited.contains(diagonal)) {
-                                BlockState diagState = world.getBlockState(diagonal);
-                                if (WOOD_BLOCKS.contains(diagState.getBlock())) {
-                                    toExplore.add(diagonal);
-                                }
+                            BlockPos next = pos.add(dx, dy, dz);
+                            if (!visited.contains(next)) {
+                                toExplore.add(next);
                             }
                         }
                     }
@@ -287,143 +233,48 @@ public class AutoTreeCutter {
             }
         }
 
-        // Vérifier si c'est un arbre valide
-        if (woodBlocks.size() < MIN_TREE_HEIGHT) {
-            return null;
-        }
-
-        return new TreeData(root, woodBlocks, leafBlocks, maxHeight + 1);
+        return woodBlocks.isEmpty() ? null : new TreeData(woodBlocks, leafBlocks, root);
     }
 
+    /**
+     * Fait s'effondrer l'arbre avec effet visuel
+     */
+    private static void collapseTree(ServerWorld world, TreeData tree) {
+        // Trier les blocs par hauteur (du haut vers le bas)
+        List<BlockPos> sortedWoodBlocks = new ArrayList<>(tree.woodBlocks);
+        sortedWoodBlocks.sort((a, b) -> Integer.compare(b.getY(), a.getY()));
 
-    private static void movePlayerToTree(MinecraftClient client, BlockPos treePos) {
-        if (client.player == null || client.world == null) return;
+        // Faire tomber les blocs par vagues pour un effet plus réaliste
+        int totalBlocks = sortedWoodBlocks.size();
+        int wavesCount = Math.min(5, totalBlocks / 3 + 1);
+        int blocksPerWave = totalBlocks / wavesCount;
 
-        // Trouver la meilleure position autour de l'arbre
-        Vec3d bestPos = findSafePositionNearTree(client.world, treePos);
+        for (int wave = 0; wave < wavesCount; wave++) {
+            int startIndex = wave * blocksPerWave;
+            int endIndex = (wave == wavesCount - 1) ? totalBlocks : (wave + 1) * blocksPerWave;
 
-        // Se téléporter à cette position
-        teleportPlayer(client, bestPos, client.player.getYaw(), client.player.getPitch());
-    }
+            List<BlockPos> waveBlocks = sortedWoodBlocks.subList(startIndex, endIndex);
 
+            // Délai entre les vagues pour l'effet visuel
+            int delay = wave * 100; // 100ms entre chaque vague
 
-    private static Vec3d findSafePositionNearTree(World world, BlockPos treePos) {
-        // Essayer d'abord les positions les plus proches
-        for (int distance = 2; distance <= 4; distance++) {
-            for (int angle = 0; angle < 360; angle += 30) {
-                double rad = Math.toRadians(angle);
-                double x = treePos.getX() + 0.5 + Math.cos(rad) * distance;
-                double z = treePos.getZ() + 0.5 + Math.sin(rad) * distance;
-
-                // Chercher une position où les pieds sont sur un bloc solide
-                BlockPos checkPos = new BlockPos((int)x, treePos.getY(), (int)z);
-
-                // Trouver le sol
-                while (world.getBlockState(checkPos).isAir() && checkPos.getY() > world.getBottomY()) {
-                    checkPos = checkPos.down();
+            world.getServer().execute(() -> {
+                try {
+                    Thread.sleep(delay);
+                    dropBlocksWave(world, waveBlocks);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 }
-
-                // Monter d'un bloc pour être sur le sol
-                checkPos = checkPos.up();
-
-                if (isSafePosition(world, checkPos)) {
-                    return new Vec3d(x, checkPos.getY(), z);
-                }
-            }
+            });
         }
-
-        // Position par défaut si aucune position sûre n'est trouvée
-        return new Vec3d(treePos.getX() + 3, treePos.getY(), treePos.getZ());
     }
 
-
-    private static boolean isSafePosition(World world, BlockPos pos) {
-        return world.getBlockState(pos).isAir() &&
-                world.getBlockState(pos.up()).isAir() &&
-                !world.getBlockState(pos.down()).isAir() &&
-                !LEAF_BLOCKS.contains(world.getBlockState(pos.down()).getBlock());
-    }
-
-
-    private static void harvestTreeByRoot(MinecraftClient client, TreeData tree) {
-        if (client.player == null || client.world == null) return;
-
-        sendActionBarMessage("Coupe de la racine...", Formatting.YELLOW);
-
-        // Casser physiquement la racine
-        breakBlock(client, tree.root);
-
-        sleep(100); // Petit délai
-
-        sendActionBarMessage("L'arbre s'effondre...", Formatting.GOLD);
-
-        dropAllWoodBlocks(client, tree);
-
-        dropSomeLeaves(client, tree);
-
-        playTreeFallSound(client);
-        sendActionBarMessage("✓ Arbre abattu! (" + tree.allWoodBlocks.size() + " blocs)", Formatting.GREEN);
-    }
-
-
-    private static void dropAllWoodBlocks(MinecraftClient client, TreeData tree) {
-        World world = client.world;
-        if (world == null) return;
-
-        for (BlockPos pos : tree.allWoodBlocks) {
-            if (pos.equals(tree.root)) continue; // La racine est déjà cassée
-
+    private static void dropBlocksWave(ServerWorld world, List<BlockPos> blocks) {
+        for (BlockPos pos : blocks) {
             BlockState state = world.getBlockState(pos);
             if (WOOD_BLOCKS.contains(state.getBlock())) {
-                // Créer l'item drop pour ce bloc
-                ItemStack itemStack = new ItemStack(state.getBlock().asItem());
-
-                // Faire apparaître l'item dans le monde
-                ItemEntity itemEntity = new ItemEntity(world,
-                        pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, itemStack);
-
-                // Ajouter un peu de vélocité aléatoire pour l'effet
-                itemEntity.setVelocity(
-                        (Math.random() - 0.5) * 0.3,
-                        Math.random() * 0.2 + 0.1,
-                        (Math.random() - 0.5) * 0.3
-                );
-
-                world.spawnEntity(itemEntity);
-
-                world.setBlockState(pos, Blocks.AIR.getDefaultState());
-            }
-        }
-    }
-
-
-    private static void dropSomeLeaves(MinecraftClient client, TreeData tree) {
-        World world = client.world;
-        if (world == null) return;
-
-
-        List<BlockPos> leaves = new ArrayList<>(tree.leafBlocks);
-        Collections.shuffle(leaves);
-        int maxLeaves = Math.min(leaves.size(), 20);
-
-        for (int i = 0; i < maxLeaves; i++) {
-            BlockPos pos = leaves.get(i);
-            BlockState state = world.getBlockState(pos);
-
-            if (LEAF_BLOCKS.contains(state.getBlock())) {
-                if (Math.random() < 0.3) {
-                    ItemStack itemStack = new ItemStack(state.getBlock().asItem());
-                    ItemEntity itemEntity = new ItemEntity(world,
-                            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, itemStack);
-
-                    itemEntity.setVelocity(
-                            (Math.random() - 0.5) * 0.2,
-                            Math.random() * 0.1,
-                            (Math.random() - 0.5) * 0.2
-                    );
-
-                    world.spawnEntity(itemEntity);
-                }
+                // Faire dropper le bloc
+                Block.dropStacks(state, world, pos);
 
                 // Remplacer par de l'air
                 world.setBlockState(pos, Blocks.AIR.getDefaultState());
@@ -431,72 +282,86 @@ public class AutoTreeCutter {
         }
     }
 
+    private static void checkTreeStability(ServerWorld world, BlockPos brokenPos) {
+        // Chercher des blocs de bois connectés qui pourraient être instables
+        Set<BlockPos> connectedWood = findConnectedWoodBlocks(world, brokenPos);
 
-    private static void sendActionBarMessage(String message, Formatting color) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client != null && client.player != null) {
-            client.player.sendMessage(Text.literal(message).formatted(color), true);
-        }
-    }
+        for (BlockPos woodPos : connectedWood) {
+            if (!isWoodBlockStable(world, woodPos)) {
+                // Ce bloc n'est plus stable, le faire tomber
+                BlockState state = world.getBlockState(woodPos);
+                if (WOOD_BLOCKS.contains(state.getBlock())) {
+                    // Petit délai pour un effet en cascade
+                    world.getServer().execute(() -> {
+                        try {
+                            Thread.sleep(world.random.nextInt(200) + 100);
 
-    static void teleportPlayer(MinecraftClient client, Vec3d pos, float yaw, float pitch) {
-        if (client.player != null && client.player.networkHandler != null) {
-            // Créer et envoyer le packet de téléportation
-            PlayerMoveC2SPacket.Full packet = new PlayerMoveC2SPacket.Full(
-                    pos.x, pos.y, pos.z, yaw, pitch, true, false
-            );
-            client.player.networkHandler.sendPacket(packet);
+                            Block.dropStacks(state, world, woodPos);
+                            world.setBlockState(woodPos, Blocks.AIR.getDefaultState());
+                            world.syncWorldEvent(2001, woodPos, Block.getRawIdFromState(state));
 
-            // Mettre à jour la position locale du joueur
-            client.player.setPosition(pos.x, pos.y, pos.z);
-            client.player.setYaw(yaw);
-            client.player.setPitch(pitch);
-        }
-    }
-
-
-    private static void breakBlock(MinecraftClient client, BlockPos pos) {
-        if (client.player != null && client.player.networkHandler != null) {
-            client.player.networkHandler.sendPacket(
-                    new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos, Direction.UP)
-            );
-            client.player.networkHandler.sendPacket(
-                    new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, pos, Direction.UP)
-            );
+                            // Vérifier récursivement les blocs connectés
+                            checkTreeStability(world, woodPos);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    });
+                }
+            }
         }
     }
 
     /**
-     * Joue un son d'arbre qui tombe
+     * Trouve tous les blocs de bois connectés à une position
      */
-    private static void playTreeFallSound(MinecraftClient client) {
-        if (client.world != null && client.player != null) {
-            client.world.playSound(client.player, client.player.getBlockPos(),
-                    SoundEvents.BLOCK_WOOD_BREAK, SoundCategory.BLOCKS, 1.0f, 1.0f);
+    private static Set<BlockPos> findConnectedWoodBlocks(World world, BlockPos center) {
+        Set<BlockPos> connected = new HashSet<>();
+        Set<BlockPos> visited = new HashSet<>();
+        Queue<BlockPos> toCheck = new LinkedList<>();
+
+        // Vérifier dans un rayon de 3 blocs autour de la position cassée
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dy = -3; dy <= 3; dy++) {
+                for (int dz = -3; dz <= 3; dz++) {
+                    BlockPos pos = center.add(dx, dy, dz);
+                    if (WOOD_BLOCKS.contains(world.getBlockState(pos).getBlock())) {
+                        toCheck.add(pos);
+                    }
+                }
+            }
         }
+
+        return connected;
     }
 
+    /**
+     * Vérifie si un bloc de bois est stable (connecté au sol)
+     */
+    private static boolean isWoodBlockStable(World world, BlockPos pos) {
+        Set<BlockPos> visited = new HashSet<>();
+        Queue<BlockPos> toCheck = new LinkedList<>();
+        toCheck.add(pos);
 
-    private static void sleep(int millis) {
-        try {
-            Thread.sleep(millis);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        while (!toCheck.isEmpty() && visited.size() < 50) { // Limite pour éviter les boucles infinies
+            BlockPos current = toCheck.poll();
+            if (visited.contains(current)) continue;
+            visited.add(current);
+
+            // Si on trouve le sol, le bloc est stable
+            if (GROUND_BLOCKS.contains(world.getBlockState(current.down()).getBlock())) {
+                return true;
+            }
+
+            // Continuer à chercher dans les blocs de bois connectés
+            for (Direction dir : Direction.values()) {
+                BlockPos next = current.offset(dir);
+                if (!visited.contains(next) &&
+                        WOOD_BLOCKS.contains(world.getBlockState(next).getBlock())) {
+                    toCheck.add(next);
+                }
+            }
         }
-    }
 
-
-    private static class TreeData {
-        final BlockPos root;
-        final Set<BlockPos> allWoodBlocks;
-        final Set<BlockPos> leafBlocks;
-        final int height;
-
-        TreeData(BlockPos root, Set<BlockPos> allWoodBlocks, Set<BlockPos> leafBlocks, int height) {
-            this.root = root;
-            this.allWoodBlocks = allWoodBlocks;
-            this.leafBlocks = leafBlocks;
-            this.height = height;
-        }
+        return false; // Aucune connexion au sol trouvée
     }
 }
